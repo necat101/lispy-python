@@ -1,218 +1,228 @@
 #!/usr/bin/env python3
 """
-Lispy: A Simple Lisp Interpreter in Python
-Based on Peter Norvig's "How to Write a (Lisp) Interpreter (in Python)"
-https://norvig.com/lispy.html
-
-This implementation follows Norvig's design with improvements for clarity.
+Lispy: A Compact Lisp Interpreter in Python
+Based on Peter Norvig's lispy.html with improvements
 """
 
 import math
 import operator as op
-from typing import Union, List, Any, Dict
+import functools as ft
+import sys
 
-# Types
 Symbol = str
-Number = Union[int, float]
-Atom = Union[Symbol, Number]
-Exp = Union[Atom, List]
-
-def tokenize(chars: str) -> List[str]:
-    """Convert a string of characters into a list of tokens."""
-    return chars.replace('(', ' ( ').replace(')', ' ) ').split()
-
-def parse(program: str) -> Exp:
-    """Read a Scheme expression from a string."""
-    return read_from_tokens(tokenize(program))
-
-def read_from_tokens(tokens: List[str]) -> Exp:
-    """Read an expression from a sequence of tokens."""
-    if len(tokens) == 0:
-        raise SyntaxError('unexpected EOF')
-    token = tokens.pop(0)
-    if token == '(':
-        L = []
-        while tokens[0] != ')':
-            L.append(read_from_tokens(tokens))
-        tokens.pop(0)  # pop off ')'
-        return L
-    elif token == ')':
-        raise SyntaxError('unexpected )')
-    else:
-        return atom(token)
-
-def atom(token: str) -> Atom:
-    """Numbers become numbers; every other token is a symbol."""
-    try:
-        return int(token)
-    except ValueError:
-        try:
-            return float(token)
-        except ValueError:
-            return Symbol(token)
 
 class Env(dict):
-    """An environment: a dict of {'var': val} pairs, with an outer Env."""
     def __init__(self, params=(), args=(), outer=None):
-        self.update(zip(params, args))
+        super().__init__(zip(params, args))
         self.outer = outer
-
-    def find(self, var: str) -> 'Env':
-        """Find the innermost Env where var appears."""
+    
+    def find(self, var):
         if var in self:
             return self
-        elif self.outer is not None:
+        if self.outer:
             return self.outer.find(var)
-        else:
-            raise NameError(f"Undefined symbol: {var}")
+        raise NameError(f"undefined symbol: {var}")
 
-class Procedure:
-    """A user-defined Scheme procedure."""
+class Proc:
     def __init__(self, params, body, env):
-        self.params = params
-        self.body = body
-        self.env = env
-
+        self.params, self.body, self.env = params, body, env
+    
     def __call__(self, *args):
-        env = Env(self.params, args, self.env)
-        return eval(self.body, env)
+        return evl(['begin', *self.body], Env(self.params, args, self.env))
 
-def standard_env() -> Env:
-    """An environment with some Scheme standard procedures."""
-    env = Env()
-    env.update(vars(math))
-    env.update({
-        '+': op.add,
-        '-': op.sub,
-        '*': op.mul,
-        '/': op.truediv,
-        '>': op.gt,
-        '<': op.lt,
-        '>=': op.ge,
-        '<=': op.le,
-        '=': op.eq,
-        'abs': abs,
-        'append': op.add,
-        'apply': lambda proc, args: proc(*args),
-        'begin': lambda *x: x[-1],
-        'car': lambda x: x[0],
-        'cdr': lambda x: x[1:],
+def tokenize(s):
+    return s.replace('(', ' ( ').replace(')', ' ) ').replace("'", " ' ").split()
+
+def atom(t):
+    try:
+        return int(t)
+    except ValueError:
+        try:
+            return float(t)
+        except ValueError:
+            return t
+
+def read(ts):
+    if not ts:
+        raise SyntaxError("unexpected EOF")
+    t = ts.pop(0)
+    if t == '(':
+        xs = []
+        while True:
+            if not ts:
+                raise SyntaxError("missing ')'")
+            if ts[0] == ')':
+                ts.pop(0)
+                return xs
+            xs.append(read(ts))
+    if t == ')':
+        raise SyntaxError("unexpected ')'")
+    if t == "'":
+        return ['quote', read(ts)]
+    return atom(t)
+
+def parse(s):
+    ts = tokenize(s)
+    x = read(ts)
+    if ts:
+        raise SyntaxError("trailing tokens")
+    return x
+
+def prod(xs):
+    return ft.reduce(op.mul, xs, 1)
+
+def div(x, *xs):
+    return ft.reduce(op.truediv, xs, x) if xs else 1 / x
+
+def standard_env():
+    e = Env()
+    e.update(vars(math))
+    e.update({
+        '+': lambda *xs: sum(xs),
+        '-': lambda x, *xs: x - sum(xs) if xs else -x,
+        '*': lambda *xs: prod(xs),
+        '/': div,
+        '>': op.gt, '<': op.lt, '>=': op.ge, '<=': op.le, '=': op.eq,
+        'abs': abs, 'append': op.add, 'apply': lambda f, xs: f(*xs),
+        'car': lambda x: x[0], 'cdr': lambda x: x[1:],
         'cons': lambda x, y: [x] + y,
-        'eq?': op.is_,
-        'equal?': op.eq,
-        'length': len,
-        'list': lambda *x: list(x),
-        'list?': lambda x: isinstance(x, list),
-        'map': lambda proc, lst: list(map(proc, lst)),
-        'max': max,
-        'min': min,
-        'not': op.not_,
+        'eq?': op.is_, 'equal?': op.eq, 'length': len,
+        'list': lambda *xs: list(xs), 'list?': lambda x: isinstance(x, list),
+        'map': lambda f, xs: list(map(f, xs)),
+        'max': max, 'min': min, 'not': op.not_,
         'null?': lambda x: x == [],
-        'number?': lambda x: isinstance(x, Number),
+        'number?': lambda x: isinstance(x, (int, float)),
         'procedure?': callable,
         'round': round,
-        'symbol?': lambda x: isinstance(x, Symbol),
+        'symbol?': lambda x: isinstance(x, str),
     })
-    return env
+    return e
 
-global_env = standard_env()
+GLOBAL = standard_env()
 
-def eval(x: Exp, env=global_env) -> Any:
-    """Evaluate an expression in an environment."""
-    if isinstance(x, Symbol):
-        return env.find(x)[x]
-    elif not isinstance(x, list):
-        return x
-    elif x[0] == 'quote':
-        return x[1]
-    elif x[0] == 'if':
-        (_, test, conseq, alt) = x
-        exp = conseq if eval(test, env) else alt
-        return eval(exp, env)
-    elif x[0] == 'define':
-        if isinstance(x[1], list):
-            (_, (name, *params), body) = x
-            env[name] = Procedure(params, body, env)
-        else:
-            (_, var, exp) = x
-            env[var] = eval(exp, env)
-    elif x[0] == 'set!':
-        (_, var, exp) = x
-        env.find(var)[var] = eval(exp, env)
-    elif x[0] == 'lambda':
-        (_, params, body) = x
-        return Procedure(params, body, env)
-    else:
-        proc = eval(x[0], env)
-        args = [eval(arg, env) for arg in x[1:]]
-        return proc(*args)
-
-def repl(prompt='lis.py> '):
-    """A prompt-read-eval-print loop."""
+def evl(x, env=GLOBAL):
     while True:
-        try:
-            val = eval(parse(input(prompt)))
-            if val is not None:
-                print(lispstr(val))
-        except KeyboardInterrupt:
-            print("\nGoodbye!")
-            break
-        except Exception as e:
-            print(f"Error: {e}")
+        if isinstance(x, Symbol):
+            return env.find(x)[x]
+        if not isinstance(x, list):
+            return x
+        if not x:
+            return []
+        
+        head = x[0]
+        
+        if head == 'quote':
+            return x[1]
+        if head == 'if':
+            _, test, conseq, alt = x
+            x = conseq if evl(test, env) else alt
+        elif head == 'define':
+            if isinstance(x[1], list):
+                _, (name, *params), *body = x
+                env[name] = Proc(params, body, env)
+            else:
+                _, name, exp = x
+                env[name] = evl(exp, env)
+            return None
+        elif head == 'set!':
+            _, name, exp = x
+            env.find(name)[name] = evl(exp, env)
+            return None
+        elif head == 'lambda':
+            _, params, *body = x
+            return Proc(params, body, env)
+        elif head == 'begin':
+            for exp in x[1:-1]:
+                evl(exp, env)
+            x = x[-1]
+        else:
+            proc = evl(head, env)
+            args = [evl(arg, env) for arg in x[1:]]
+            return proc(*args)
 
-def lispstr(exp) -> str:
-    """Convert a Python object back into a Lisp-readable string."""
-    if isinstance(exp, list):
-        return '(' + ' '.join(map(lispstr, exp)) + ')'
-    else:
-        return str(exp)
+def lispstr(x):
+    return '(' + ' '.join(map(lispstr, x)) + ')' if isinstance(x, list) else str(x)
 
 def run_tests():
-    """Run basic tests to verify the interpreter works."""
+    """Run comprehensive tests."""
     tests = [
-        ("(+ 1 2)", 3),
-        ("(* 3 4)", 12),
-        ("(define r 10)", None),
-        ("(* pi (* r r))", 314.1592653589793),
-        ("(if (> 10 5) 1 0)", 1),
-        ("(if (< 10 5) 1 0)", 0),
-        ("(define circle-area (lambda (r) (* pi (* r r))))", None),
-        ("(circle-area 3)", 28.274333882308138),
-        ("(define fact (lambda (n) (if (<= n 1) 1 (* n (fact (- n 1))))))", None),
+        ("(+ 1 2 3 4)", 10),
+        ("(* 2 3 4)", 24),
+        ("(- 10 1 2 3)", 4),
+        ("(/ 100 2 5)", 10),
+        ("(- 5)", -5),
+        ("(/ 2)", 0.5),
+        ("'hello", "hello"),
+        ("'(1 2 3)", [1, 2, 3]),
+        ("(define (square x) (* x x))", None),
+        ("(square 5)", 25),
+        ("((lambda (x) (define y 10) (+ x y)) 5)", 15),
+        ("(begin (define a 1) (define b 2) (+ a b))", 3),
+        ("(define (fact n) (if (<= n 1) 1 (* n (fact (- n 1)))))", None),
         ("(fact 5)", 120),
         ("(fact 10)", 3628800),
-        ("(list 1 2 3)", [1, 2, 3]),
-        ("(car (list 1 2 3))", 1),
-        ("(cdr (list 1 2 3))", [2, 3]),
-        ("(cons 0 (list 1 2))", [0, 1, 2]),
+        ("(map (lambda (x) (* x x)) '(1 2 3 4 5))", [1, 4, 9, 16, 25]),
+        ("(define (make-adder n) (lambda (x) (+ x n)))", None),
+        ("(define add5 (make-adder 5))", None),
+        ("(add5 10)", 15),
+        ("(car '(1 2 3))", 1),
+        ("(cdr '(1 2 3))", [2, 3]),
+        ("(cons 0 '(1 2))", [0, 1, 2]),
+        ("(length '(a b c d))", 4),
+        ("(define (sum lst) (if (null? lst) 0 (+ (car lst) (sum (cdr lst)))))", None),
+        ("(sum '(1 2 3 4 5))", 15),
+        ("(define (filter pred lst) (if (null? lst) '() (if (pred (car lst)) (cons (car lst) (filter pred (cdr lst))) (filter pred (cdr lst)))))", None),
+        ("(filter (lambda (x) (> x 2)) '(1 2 3 4 5))", [3, 4, 5]),
     ]
     
-    print("Running Lispy tests...")
+    print("Running Lispy tests...\n")
     passed = 0
     failed = 0
     
     for code, expected in tests:
         try:
-            result = eval(parse(code))
-            if expected is None or (abs(result - expected) < 1e-10 if isinstance(expected, float) else result == expected):
-                print(f"✓ {code} => {result}")
+            result = evl(parse(code))
+            if expected is None or result == expected:
+                print(f"✓ {code}")
+                if expected is not None:
+                    print(f"  => {result}")
                 passed += 1
             else:
-                print(f"✗ {code} => {result} (expected {expected})")
+                print(f"✗ {code}")
+                print(f"  => {result} (expected {expected})")
                 failed += 1
         except Exception as e:
-            print(f"✗ {code} => ERROR: {e}")
+            print(f"✗ {code}")
+            print(f"  ERROR: {e}")
             failed += 1
     
-    print(f"\nTests complete: {passed} passed, {failed} failed")
+    print(f"\n{passed} passed, {failed} failed")
     return failed == 0
 
+def repl():
+    print("Lispy v2 - Compact Lisp Interpreter")
+    print("Type expressions or 'test' to run tests, Ctrl-C to exit\n")
+    while True:
+        try:
+            line = input('lispy> ')
+            if line.strip() == 'test':
+                run_tests()
+                print()
+                continue
+            v = evl(parse(line))
+            if v is not None:
+                print(lispstr(v))
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except EOFError:
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+
 if __name__ == '__main__':
-    import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'test':
         success = run_tests()
         sys.exit(0 if success else 1)
     else:
-        print("Lispy: A Simple Lisp Interpreter")
-        print("Type 'test' as argument to run tests, or start REPL")
         repl()

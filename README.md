@@ -1,92 +1,136 @@
-# Lispy - A Lisp Interpreter in Python
+# Lispy v2 - A Compact Lisp Interpreter in Python
 
-A clean implementation of Peter Norvig's "How to Write a (Lisp) Interpreter (in Python)" from https://norvig.com/lispy.html
+A clean, compact implementation based on Peter Norvig's "How to Write a (Lisp) Interpreter (in Python)" with improvements for correctness and conciseness.
 
-## Overview
+**Repository:** https://github.com/necat101/lispy-python
 
-This project implements a Scheme-like Lisp interpreter in Python, following Norvig's classic tutorial. The interpreter supports:
+## What's New in v2
 
-- Basic arithmetic: `+`, `-`, `*`, `/`
-- Comparisons: `>`, `<`, `>=`, `<=`, `=`
-- Control flow: `if`, `define`, `set!`, `lambda`
-- List operations: `car`, `cdr`, `cons`, `list`, `append`
-- Mathematical functions from Python's math module
-- Recursive functions and lexical scoping
-- Closures
+- **More compact**: ~140 lines (down from ~170)
+- **Tail-call optimization**: `evl` uses a while loop for proper tail recursion
+- **Quote syntax**: Support for `'x` as sugar for `(quote x)`
+- **Variadic arithmetic**: `(+ 1 2 3 4)`, `(* 2 3 4)`, proper unary `-` and `/`
+- **Multi-body functions**: Lambdas and defines can have multiple expressions
+- **Better error handling**: Detects missing parens and trailing tokens
+- **Improved `begin`**: Proper sequencing semantics
 
-## Usage
+## Quick Start
 
-### Run the REPL
 ```bash
+# Clone and run
+git clone https://github.com/necat101/lispy-python.git
+cd lispy-python
 python3 lis.py
-```
 
-### Run tests
-```bash
+# Run tests
 python3 lis.py test
 ```
 
-### Examples
+## Examples
 
+### Basic Usage
 ```lisp
-;; Basic arithmetic
-(+ 1 2 3)           ; => 6
-(* 3 4)             ; => 12
+lispy> (+ 1 2 3 4)
+10
 
-;; Define variables
-(define r 10)
-(* pi (* r r))      ; => 314.159...
+lispy> (define (square x) (* x x))
+lispy> (square 5)
+25
 
-;; Define functions
-(define square (lambda (x) (* x x)))
-(square 5)          ; => 25
-
-;; Recursion
-(define fact (lambda (n)
-  (if (<= n 1)
-      1
-      (* n (fact (- n 1))))))
-(fact 10)           ; => 3628800
-
-;; Lists
-(list 1 2 3)        ; => (1 2 3)
-(car (list 1 2 3))   ; => 1
-(cdr (list 1 2 3))  ; => (2 3)
-(cons 0 (list 1 2)) ; => (0 1 2)
+lispy> '(1 2 3 4 5)
+(1 2 3 4 5)
 ```
 
-## Implementation Details
+### Higher-Order Functions
+```lisp
+lispy> (map (lambda (x) (* x x)) '(1 2 3 4 5))
+(1 4 9 16 25)
 
-The interpreter consists of:
+lispy> (define (filter pred lst)
+         (if (null? lst)
+             '()
+             (if (pred (car lst))
+                 (cons (car lst) (filter pred (cdr lst)))
+                 (filter pred (cdr lst)))))
+lispy> (filter (lambda (x) (> x 2)) '(1 2 3 4 5))
+(3 4 5)
+```
 
-1. **Parser** (`parse`, `tokenize`, `read_from_tokens`): Converts Lisp code to Python data structures
-2. **Evaluator** (`eval`): Executes the parsed code in an environment
-3. **Environment** (`Env`): Manages variable bindings with lexical scoping
-4. **Procedures** (`Procedure`): Implements user-defined functions with closures
+### Closures
+```lisp
+lispy> (define (make-counter)
+         (define count 0)
+         (lambda ()
+           (set! count (+ count 1))
+           count))
+lispy> (define c (make-counter))
+lispy> (c)
+1
+lispy> (c)
+2
+```
 
-Total: ~150 lines of Python code (excluding tests and comments)
+### Practical Examples
+See `examples-advanced.lisp` for:
+- Variadic arithmetic
+- Map/filter/fold
+- List utilities (length, append, reverse)
+- Fibonacci (recursive and iterative)
+- Function composition and currying
+- Symbolic differentiation
 
-## Hacker News Discussion
+## Implementation Highlights
 
-This implementation was inspired by the Hacker News thread discussing Norvig's lispy tutorial. The community sentiment was overwhelmingly positive about:
+The interpreter is built around a simple eval loop with explicit tail-call handling:
 
-- Lisp interpreters as excellent learning exercises
-- The educational value of implementing languages
-- Appreciation for Norvig's clear, minimal implementation
-- The timeless nature of good programming tutorials despite AI advances
+```python
+def evl(x, env=GLOBAL):
+    while True:  # Tail-call optimization
+        if isinstance(x, Symbol): return env.find(x)[x]
+        if not isinstance(x, list): return x
+        # ... handle special forms ...
+        # For tail positions, set x and continue loop instead of recursing
+```
 
-Key takeaways from the discussion:
-- Writing a Lisp is a favorite "rite of passage" project
-- Understanding parentheses and S-expressions changes how you view code structure
-- The simplicity of Lisp syntax makes it ideal for learning interpreter concepts
-- Good learning resources remain valuable regardless of AI tools
+**Core components:**
+1. **Parser**: Tokenize → read (recursive descent) → AST
+2. **Environment**: Chain of dicts for lexical scoping
+3. **Procedures**: Closures capturing params, body, and environment
+4. **Evaluator**: Direct-style with proper tail calls
+
+## Testing
+
+```bash
+$ python3 lis.py test
+Running Lispy tests...
+
+✓ (+ 1 2 3 4)
+  => 10
+✓ (map (lambda (x) (* x x)) '(1 2 3 4 5))
+  => [1, 4, 9, 16, 25]
+✓ (fact 10)
+  => 3628800
+...
+
+28 passed, 0 failed
+```
+
+## Hacker News Context
+
+This implementation was inspired by [HN discussion #48619831](https://news.ycombinator.com/item?id=48619831) on Norvig's tutorial. Key insights from the community:
+
+- Writing interpreters remains a valuable learning exercise despite AI advances
+- Lisp's minimal syntax makes it ideal for understanding language implementation
+- The parentheses debate: formatting and tooling matter more than syntax
+- MAL (Make-A-Lisp) mentioned as another excellent tutorial resource
 
 ## Files
 
-- `lis.py` - Main interpreter implementation
+- `lis.py` - The interpreter (~140 lines)
+- `examples.lisp` - Basic examples
+- `examples-advanced.lisp` - Advanced patterns and algorithms
 - `README.md` - This file
-- `examples.lisp` - Example Lisp programs
 
 ## License
 
-MIT - Based on Peter Norvig's public domain code
+Public domain / MIT - Based on Peter Norvig's original code
